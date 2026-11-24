@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>分批入库</h1>
+
+{% if errors %}
+<div class="flash danger">
+  <strong>{{ errors.title }}</strong>
+  <ul>{% for p in errors.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  <p class="muted">入库失败会整体回滚：库内原有数据与供数状态保持不变。</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post" enctype="multipart/form-data">
+    <label>批次名称
+      <input type="text" name="label" required maxlength="120" placeholder="例如 2026-11 第三批">
+    </label>
+    <label>送检单 CSV
+      <input type="file" name="submission_file" accept=".csv,text/csv" required>
+      <small>列：row_no, sample_no, 及 0–8 个同名备选列</small>
+    </label>
+    <label>主检结论 CSV
+      <input type="file" name="conclusion_file" accept=".csv,text/csv" required>
+      <small>列：row_no, sample_no, 及与送检单同名同集合的备选列</small>
+    </label>
+    <label>核定配对 CSV
+      <input type="file" name="pairing_file" accept=".csv,text/csv" required>
+      <small>列：submission_row_no, conclusion_row_no；可跨批引用已有行号</small>
+    </label>
+    <button type="submit">校验并入库</button>
+  </form>
+</section>
+
+<section>
+  <h2>登记中的备选列</h2>
+  {% if columns %}
+  <table>
+    <thead><tr><th>列名</th><th>送检单</th><th>主检结论</th></tr></thead>
+    <tbody>
+    {% for c in columns %}
+      <tr>
+        <td class="mono">{{ c.name }}</td>
+        <td>{{ '有' if c.in_submission else '—' }}</td>
+        <td>{{ '有' if c.in_conclusion else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">全库最多登记 8 个备选列；只有两侧同名的列才能进入联接键。</p>
+  {% else %}
+  <p class="muted">尚未登记备选列。</p>
+  {% endif %}
+</section>
+{% endblock %}

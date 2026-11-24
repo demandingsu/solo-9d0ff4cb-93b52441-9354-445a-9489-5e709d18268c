@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>入库结果：数据已收，明细停供</h1>
+<div class="flash warning">
+  批次 #{{ batch_id }} 的数据已照收。因补录使现用键失效，本批提交起联接明细停供。
+</div>
+<section class="panel">
+  <h2>失效原因</h2>
+  <p>{{ invalidated.summary }}</p>
+  <ul>
+    {% for line in invalidated.lines %}
+      <li class="mono">{{ line }}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">
+    现用键：{{ fmt_columns(invalidated.columns) }}；漏连 {{ invalidated.missing_pair_count }} 对，
+    误连组 {{ invalidated.wrong_group_count }} 个。重新找键并确认后，所有停供批次一并恢复。
+  </p>
+  <p>
+    <a class="button" href="{{ url_for('keys_view') }}">去找键与复验</a>
+    <a class="button ghost" href="{{ url_for('batch_view', batch_id=batch_id) }}">查看本批数据</a>
+  </p>
+</section>
+{% endblock %}

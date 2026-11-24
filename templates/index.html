@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>总览</h1>
+<section class="cards">
+  <div class="card"><span class="num">{{ stats.submissions }}</span>送检行</div>
+  <div class="card"><span class="num">{{ stats.conclusions }}</span>主检结论行</div>
+  <div class="card"><span class="num">{{ stats.pairs }}</span>核定配对</div>
+  <div class="card"><span class="num">{{ columns | length }}</span>登记备选列</div>
+</section>
+
+<section>
+  <h2>操作入口</h2>
+  <ul class="actions">
+    <li><a class="button" href="{{ url_for('import_view') }}">分批入库</a> 上传送检单、主检结论、核定配对三份 CSV。</li>
+    <li><a class="button" href="{{ url_for('keys_view') }}">找键与复验</a> 搜索含送检号、加列最少的等值联接键；确认时按当前数据复验。</li>
+    <li><a class="button" href="{{ url_for('detail_view') }}">联接明细</a> 仅在供数正常时展示。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>批次</h2>
+  {% if batches %}
+  <table>
+    <thead><tr><th>#</th><th>批次</th><th>入库时间</th><th>送检</th><th>结论</th><th>配对</th><th>供数</th><th></th></tr></thead>
+    <tbody>
+    {% for b in batches %}
+      <tr>
+        <td>{{ b.id }}</td>
+        <td>{{ b.label }}</td>
+        <td class="mono">{{ b.created_at }}</td>
+        <td>{{ b.submission_count }}</td>
+        <td>{{ b.conclusion_count }}</td>
+        <td>{{ b.pairing_count }}</td>
+        <td>
+          {% if b.supply_status == 'ok' %}<span class="tag ok">供数</span>
+          {% else %}<span class="tag bad" title="{{ b.suspended_reason }}">停供</span>{% endif %}
+        </td>
+        <td><a href="{{ url_for('batch_view', batch_id=b.id) }}">查看</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">还没有批次。先到<a href="{{ url_for('import_view') }}">分批入库</a>。</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>联接键历史</h2>
+  {% if keys %}
+  <table>
+    <thead><tr><th>#</th><th>键</th><th>状态</th><th>确认时间</th><th>失效信息</th></tr></thead>
+    <tbody>
+    {% for k in keys %}
+      <tr>
+        <td>{{ k.id }}</td>
+        <td class="mono">{{ fmt_columns(k['columns_json'] | fromjson) }}</td>
+        <td>
+          {% if k.status == 'active' %}<span class="tag ok">启用</span>
+          {% elif k.status == 'invalid' %}<span class="tag bad">失效</span>
+          {% else %}<span class="tag">已替换</span>{% endif %}
+        </td>
+        <td class="mono">{{ k.verified_at or '—' }}</td>
+        <td>
+          {{ k.invalidation_reason or '' }}
+          {% if k.status == 'invalid' %}
+          <form method="post" action="{{ url_for('confirm_existing_key', key_id=k.id) }}" class="inline">
+            <button type="submit">按当前数据复验并重启用</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">尚未确认过联接键。</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>供数事件</h2>
+  {% if events %}
+  <table>
+    <thead><tr><th>时间</th><th>批次</th><th>事件</th><th>说明</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td class="mono">{{ e.created_at }}</td>
+        <td>{{ ('#' ~ e.batch_id ~ ' ' ~ (e.batch_label or '')) if e.batch_id else '—' }}</td>
+        <td>{{ e.event }}</td>
+        <td>{{ e.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">暂无事件。</p>
+  {% endif %}
+</section>
+{% endblock %}

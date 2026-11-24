@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>批次 #{{ batch.id }}「{{ batch.label }}」</h1>
+<p class="muted">
+  入库时间 {{ batch.created_at }}；送检 {{ batch.submission_count }} 行、
+  结论 {{ batch.conclusion_count }} 行、配对 {{ batch.pairing_count }} 对。
+  供数：{% if batch.supply_status == 'ok' %}正常{% else %}停供（{{ batch.suspended_reason }}）{% endif %}
+</p>
+
+<h2>送检单</h2>
+<table>
+  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in submissions %}
+    {% set values = r['values_json'] | fromjson %}
+    <tr><td class="mono">{{ r.row_no }}</td><td class="mono">{{ r.sample_no }}</td>
+      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>主检结论</h2>
+<table>
+  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in conclusions %}
+    {% set values = r['values_json'] | fromjson %}
+    <tr><td class="mono">{{ r.row_no }}</td><td class="mono">{{ r.sample_no }}</td>
+      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>本批提交的核定配对</h2>
+<table>
+  <thead><tr><th>送检行号</th><th>结论行号</th></tr></thead>
+  <tbody>
+  {% for p in pairs %}
+    <tr><td class="mono">{{ p.submission_row_no }}</td><td class="mono">{{ p.conclusion_row_no }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

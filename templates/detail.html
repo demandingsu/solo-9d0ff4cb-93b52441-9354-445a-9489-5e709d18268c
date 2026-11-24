@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>联接明细</h1>
+
+{% if blocked %}
+<section class="flash danger">
+  <h2>明细停供</h2>
+  <p>{{ state.reason }}</p>
+  {% if state.suspended_batches %}
+  <ul>
+    {% for b in state.suspended_batches %}
+      <li>批次 #{{ b.id }}「{{ b.label }}」：{{ b.suspended_reason }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if recheck is defined and recheck %}
+  <h3>按现用键复验的漏连/误连</h3>
+  <ul class="mono">
+    {% for line in recheck.summary_lines() %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if violations is defined and violations %}
+  <h3>拒绝展开的同键组</h3>
+  <ul class="mono">
+    {% for v in violations %}
+      <li>送检行 [{{ v.submission_rows | join(', ') }}] / 结论行 [{{ v.conclusion_rows | join(', ') }}]：{{ v.reason }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p>
+    <a class="button" href="{{ url_for('keys_view') }}">去找键与复验</a>
+    <a class="button ghost" href="{{ url_for('index') }}">看键历史与重新确认</a>
+  </p>
+</section>
+{% else %}
+<section class="panel">
+  <p>现用键：<span class="mono">{{ fmt_columns(active_columns) }}</span>；
+     共 {{ total }} 行联接结果{% if total > shown %}，仅显示前 {{ shown }} 行{% endif %}。</p>
+  <form method="get" class="filters">
+    <input type="text" name="sample" value="{{ sample_q }}" placeholder="按送检号过滤">
+    <input type="text" name="row" value="{{ row_q }}" placeholder="按任一侧行号过滤">
+    <button type="submit">过滤</button>
+    <a class="button ghost" href="{{ url_for('detail_view') }}">清空</a>
+  </form>
+</section>
+
+<table>
+  <thead>
+    <tr>
+      <th>送检行号</th><th>送检号</th>
+      {% for c in active_columns %}<th>{{ c }}</th>{% endfor %}
+      <th>结论行号</th><th>结论送检号</th>
+      {% for c in active_columns %}<th>结论·{{ c }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for sub, con in rows %}
+    <tr>
+      <td class="mono">{{ sub.row_no }}</td>
+      <td class="mono">{{ sub.sample_no }}</td>
+      {% for c in active_columns %}<td>{{ sub.values.get(c, '') }}</td>{% endfor %}
+      <td class="mono">{{ con.row_no }}</td>
+      <td class="mono">{{ con.sample_no }}</td>
+      {% for c in active_columns %}<td>{{ con.values.get(c, '') }}</td>{% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if not rows %}<p class="muted">没有匹配的联接行。</p>{% endif %}
+{% endif %}
+{% endblock %}

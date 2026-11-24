@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>找键与复验</h1>
+
+<section class="panel">
+  <h2>规则</h2>
+  <p>
+    候选键固定包含 <code>sample_no</code>（送检号），再从两侧同名的备选列中选 0–8 个。
+    "恰好复现核定配对"要求：每一对核定配对的两侧行在键上相等，且每个两侧都有行的键组
+    恰好是 1 条送检 + 1 条结论且正是一对核定配对。判定按组统计，不展开同号行的笛卡尔积。
+  </p>
+  <p class="muted">
+    两侧同名备选列：{% if columns %}<span class="mono">{{ columns | join(', ') }}</span>
+    {% else %}无{% endif %}。全库数据：送检 {{ dataset.submissions | length }} 行，
+    结论 {{ dataset.conclusions | length }} 行，核定配对 {{ dataset.pairs | length }} 对。
+  </p>
+</section>
+
+{% if not dataset.ready %}
+<div class="flash warning">数据不足（需要至少一条送检行、一条结论行和一条核定配对），暂不能找键。</div>
+{% elif not result.found %}
+<section class="flash danger">
+  <h2>无解：找不到能恰好复现核定配对的键</h2>
+  <p>已穷举 {{ result.searched_subsets }} 个列组合（送检号 + 全部备选列子集），下列行怎么加列都对不上：</p>
+  {% if result.unfixable_pairs %}
+  <h3>漏连（两侧送检号本身不同，送检号进键也无法相等）</h3>
+  <ul class="mono">
+    {% for s, c in result.unfixable_pairs %}
+      <li>送检行 {{ s }} ↔ 结论行 {{ c }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if result.best_diagnosis and result.best_diagnosis.missing_pairs %}
+  <h3>漏连（最接近的键下仍未对上）</h3>
+  <ul class="mono">
+    {% for s, c in result.best_diagnosis.missing_pairs %}
+      <li>送检行 {{ s.row_no }}（送检号 {{ s.sample_no }}）↔ 结论行 {{ c.row_no }}（送检号 {{ c.sample_no }}）</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if result.best_diagnosis and result.best_diagnosis.wrong_groups %}
+  <h3>误连（最接近的键下仍有一对多/多对一）</h3>
+  <ul class="mono">
+    {% for g in result.best_diagnosis.wrong_groups %}
+      <li>
+        键 {{ g.label }}：送检行 [{{ g.submissions | map(attribute='row_no') | join(', ') }}]
+        与结论行 [{{ g.conclusions | map(attribute='row_no') | join(', ') }}] 冲突，
+        {{ g.reason }}
+      </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if result.best %}
+  <h3>最接近的尝试</h3>
+  <p class="mono">{{ fmt_columns(result.best.columns) }}：
+    漏连 {{ result.best.missing_pairs | length }} 对，误连
+    {{ result.best.wrong_submissions | length }} + {{ result.best.wrong_conclusions | length }} 行。</p>
+  {% endif %}
+</section>
+{% else %}
+<section class="panel">
+  <h2>最少加列的解：{{ result.minimal_extra }} 个备选列</h2>
+  <p class="muted">
+    从 0 列开始逐层枚举，共检查 {{ result.searched_subsets }} 个列组合。
+    {% if result.solutions | length > 1 %}同一加列数下有 {{ result.solutions | length }} 个等价解。{% endif %}
+  </p>
+  <table>
+    <thead><tr><th>#</th><th>联接键</th><th>组数</th><th>核定配对组</th><th>复验</th><th></th></tr></thead>
+    <tbody>
+    {% for sol in result.solutions %}
+      {% set diag = diagnostics[sol.columns] %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td class="mono">{{ fmt_columns(sol.columns) }}</td>
+        <td>{{ diag.group_count }}</td>
+        <td>{{ diag.ok_groups }}</td>
+        <td>{% if diag.passed %}<span class="tag ok">通过</span>{% else %}<span class="tag bad">未通过</span>{% endif %}</td>
+        <td>
+          <form method="post" action="{{ url_for('confirm_key') }}" class="inline">
+            {% for c in sol.columns %}<input type="hidden" name="columns" value="{{ c }}">{% endfor %}
+            <button type="submit">按当前数据复验并确认</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if dataset.ready %}
+<section class="panel">
+  <h2>手动选择联接键</h2>
+  <p class="muted">送检号固定入键；勾选额外的同名备选列。确认时会重新按全库当前数据复验，不通过则拒绝启用。</p>
+  <form method="post" action="{{ url_for('confirm_key') }}">
+    <span class="chip mono">sample_no</span>
+    {% for c in columns %}
+      <label class="check"><input type="checkbox" name="columns" value="{{ c }}"> {{ c }}</label>
+    {% endfor %}
+    <button type="submit">复验并确认</button>
+  </form>
+</section>
+
+<section>
+  <h2>最接近的失败尝试（供诊断参考）</h2>
+  {% if result.best and not result.best.passed %}
+  <p class="mono">{{ fmt_columns(result.best.columns) }}</p>
+  <ul>
+    <li>漏连 {{ result.best.missing_pairs | length }} 对</li>
+    <li>误连送检行 {{ result.best.wrong_submissions | length }} 条、结论行 {{ result.best.wrong_conclusions | length }} 条</li>
+  </ul>
+  {% elif result.found and result.solutions %}
+  <p class="muted">最少加列的解已通过复验，可直接在上方确认。</p>
+  {% else %}
+  <p class="muted">—</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    image: soil-sample-pairing:latest
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      DATABASE: /data/app.sqlite3
+      SECRET_KEY: ${SECRET_KEY:-change-me-before-sharing}
+    volumes:
+      - appdata:/data
+    restart: unless-stopped
+
+volumes:
+  appdata:

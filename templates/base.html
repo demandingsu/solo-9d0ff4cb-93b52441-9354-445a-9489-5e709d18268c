@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}土壤样品送检配对{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('index') }}">土壤样品送检配对</a>
+  <nav>
+    <a href="{{ url_for('index') }}">总览</a>
+    <a href="{{ url_for('import_view') }}">分批入库</a>
+    <a href="{{ url_for('keys_view') }}">找键与复验</a>
+    <a href="{{ url_for('detail_view') }}">联接明细</a>
+  </nav>
+</header>
+<main>
+  {% if state is defined %}
+  <div class="banner {{ 'ok' if state.ok else 'bad' }}">
+    <strong>{{ '明细供数中' if state.ok else '明细停供' }}</strong>
+    <span>{{ state.reason }}</span>
+    {% if state.active_key %}
+      <span class="chip">现用键：{{ fmt_columns(state.active_key['columns_json'] | fromjson) }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+  {% block body %}{% endblock %}
+</main>
+</body>
+</html>
