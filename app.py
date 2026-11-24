@@ -84,6 +84,60 @@ def all_columns(conn) -> list:
     return conn.execute("SELECT * FROM candidate_columns ORDER BY position").fetchall()
 
 
+def alias_map(conn) -> dict:
+    """旧名（别名）-> 保留名。合并列后旧名不再占备选列名额。"""
+    return {
+        r["alias"]: r["canonical"]
+        for r in conn.execute("SELECT alias, canonical FROM column_aliases")
+    }
+
+
+def aliases_by_canonical(conn) -> dict:
+    grouped: dict[str, list] = {}
+    for r in conn.execute(
+        "SELECT alias, canonical FROM column_aliases ORDER BY alias"
+    ):
+        grouped.setdefault(r["canonical"], []).append(r["alias"])
+    return grouped
+
+
+def canonical_columns(conn, names) -> list:
+    """把 CSV 列名按别名映射为保留名，保持顺序、去掉重复。"""
+    mapping = alias_map(conn)
+    seen: set = set()
+    out: list = []
+    for name in names:
+        canon = mapping.get(name, name)
+        if canon not in seen:
+            seen.add(canon)
+            out.append(canon)
+    return out
+
+
+def normalize_values(values: dict, mapping: dict):
+    """把一行 values 的键按别名映射为保留名，逐键取非空值。
+
+    返回 (canonical_values, conflicts)。conflicts 的元素为
+    (保留名, 先出现的列名, 先出现的值, 后出现的列名, 后出现的值)，
+    仅在同一行的两个非空值不同时产生。
+    """
+    canon: dict = {}
+    source_name: dict = {}
+    conflicts: list = []
+    for name, value in values.items():
+        target = mapping.get(name, name)
+        if target not in canon:
+            canon[target] = value
+            source_name[target] = name
+            continue
+        existing = canon[target]
+        if existing and value and existing != value:
+            conflicts.append((target, source_name[target], existing, name, value))
+        elif not existing:
+            canon[target] = value
+    return canon, conflicts
+
+
 def load_dataset(conn, columns: list[str] | None = None) -> joinlogic.Dataset:
     if columns is None:
         columns = shared_columns(conn)
@@ -207,18 +261,39 @@ def import_batch(conn, label, sub_table, con_table, pair_table):
     if not (sub_table.records or con_table.records or pair_table.records):
         raise ImportRejected("本次未入库", ["三份文件都没有数据行"])
 
-    if set(sub_table.candidate_columns) != set(con_table.candidate_columns):
-        only_sub = sorted(set(sub_table.candidate_columns) - set(con_table.candidate_columns))
-        only_con = sorted(set(con_table.candidate_columns) - set(sub_table.candidate_columns))
+    # 列名先按已登记的别名（如「点位号」->「采样点」）折算成保留名：
+    # 两侧 CSV 即使用了不同名称，折算后也算同一列。
+    mapping = alias_map(conn)
+    sub_columns = canonical_columns(conn, sub_table.candidate_columns)
+    con_columns = canonical_columns(conn, con_table.candidate_columns)
+    if set(sub_columns) != set(con_columns):
+        only_sub = sorted(set(sub_columns) - set(con_columns))
+        only_con = sorted(set(con_columns) - set(sub_columns))
         raise ImportRejected(
             "本次未入库",
             [
-                "送检单与主检结论的备选列必须同名同集合；"
+                "送检单与主检结论的备选列折算为保留名后必须同名同集合；"
                 + (f"仅送检单有 {only_sub}；" if only_sub else "")
                 + (f"仅结论有 {only_con}" if only_con else "")
             ],
         )
-    candidate_columns = sub_table.candidate_columns
+    candidate_columns = sub_columns
+
+    # 行值按同一规则折算；同一行两个名称都有非空值且不同 -> 冲突，整批退回。
+    problems: list[str] = []
+    normalized: dict[int, tuple] = {}  # id(record) -> (canonical_values, original_or_None)
+    for table_label, table in (("送检单", sub_table), ("主检结论", con_table)):
+        for record in table.records:
+            canon, conflicts = normalize_values(record.values, mapping)
+            for target, name_a, val_a, name_b, val_b in conflicts:
+                problems.append(
+                    f"{table_label} 行 {record.row_no}：列「{name_a}」={val_a} 与 "
+                    f"「{name_b}」={val_b} 同属保留列「{target}」但值不同"
+                )
+            original = record.values if set(canon) != set(record.values) else None
+            normalized[id(record)] = (canon, original)
+    if problems:
+        raise ImportRejected("本次未入库", problems)
 
     known = {r["name"] for r in all_columns(conn)}
     new_names = [c for c in candidate_columns if c not in known]
@@ -228,7 +303,7 @@ def import_batch(conn, label, sub_table, con_table, pair_table):
             [
                 f"备选列登记后将达到 {len(known) + len(new_names)} 个，"
                 f"超过全库上限 {csvio.MAX_CANDIDATE_COLUMNS} 个"
-                f"（本批新列 {new_names}）"
+                f"（本批新列 {new_names}；已合并的别名不另占名额）"
             ],
         )
 
@@ -246,11 +321,18 @@ def import_batch(conn, label, sub_table, con_table, pair_table):
     batch_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
     for record in sub_table.records:
+        canon, original = normalized[id(record)]
         try:
             conn.execute(
-                "INSERT INTO submission_rows(batch_id, row_no, sample_no, values_json) "
-                "VALUES (?, ?, ?, ?)",
-                (batch_id, record.row_no, record.sample_no, dumps(record.values)),
+                "INSERT INTO submission_rows(batch_id, row_no, sample_no, values_json, "
+                "original_values_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    batch_id,
+                    record.row_no,
+                    record.sample_no,
+                    dumps(canon),
+                    dumps(original) if original is not None else None,
+                ),
             )
         except sqlite3.IntegrityError as exc:
             raise ImportRejected(
@@ -258,11 +340,18 @@ def import_batch(conn, label, sub_table, con_table, pair_table):
                 [f"送检单行号 {record.row_no!r} 与库内已有行号冲突（{exc}）"],
             ) from exc
     for record in con_table.records:
+        canon, original = normalized[id(record)]
         try:
             conn.execute(
-                "INSERT INTO conclusion_rows(batch_id, row_no, sample_no, values_json) "
-                "VALUES (?, ?, ?, ?)",
-                (batch_id, record.row_no, record.sample_no, dumps(record.values)),
+                "INSERT INTO conclusion_rows(batch_id, row_no, sample_no, values_json, "
+                "original_values_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    batch_id,
+                    record.row_no,
+                    record.sample_no,
+                    dumps(canon),
+                    dumps(original) if original is not None else None,
+                ),
             )
         except sqlite3.IntegrityError as exc:
             raise ImportRejected(
@@ -380,6 +469,179 @@ def fmt_columns(columns) -> str:
     return "sample_no" + "".join(f" + {c}" for c in columns)
 
 
+# --------------------------------------------------------------------------- 列合并
+
+
+def merge_columns(conn, name_a: str, name_b: str, keep: str) -> dict:
+    """把两个已登记备选列合并为一个保留名；在一个写事务内执行，冲突则整体回滚。
+
+    逐行取两个列的非空值作为合并值；同一行两个非空值不同 -> 指出表名和行号，
+    抛 ImportRejected，数据、列登记、供数状态全部保持原样。
+    合并后旧名登记为别名，两种名称共用一个备选列名额；
+    现用键中的旧名换成保留名并去重，复验通过则继续供数，否则随合并停供。
+    """
+    known = {r["name"] for r in all_columns(conn)}
+    problems: list[str] = []
+    if not name_a or not name_b:
+        problems.append("请选择两个已登记的备选列")
+    elif name_a == name_b:
+        problems.append(f"两个选择都是「{name_a}」，请选两个不同的备选列")
+    if keep not in (name_a, name_b):
+        problems.append("保留名必须是所选两列之一")
+    missing = [n for n in {name_a, name_b} if n and n not in known]
+    if missing:
+        problems.append(f"列 {sorted(missing)} 不是已登记的备选列（别名已合并的列请用保留名）")
+    if problems:
+        raise ImportRejected("本次合并未执行", problems)
+
+    drop = name_b if keep == name_a else name_a
+
+    # 1) 逐行合并两列的值；冲突只登记不写入，最后统一抛错回滚。
+    changed_rows = 0
+    for table, label in (("submission_rows", "送检单"), ("conclusion_rows", "主检结论")):
+        for row in conn.execute(f"SELECT * FROM {table} ORDER BY row_no").fetchall():
+            values = loads(row["values_json"])
+            if keep not in values and drop not in values:
+                continue
+            v_keep = values.get(keep, "")
+            v_drop = values.get(drop, "")
+            if v_keep and v_keep != v_drop and v_drop:
+                problems.append(
+                    f"{label} 行 {row['row_no']}：「{keep}」={v_keep} 与 "
+                    f"「{drop}」={v_drop} 两个非空值不同"
+                )
+                continue
+            merged = v_keep or v_drop
+            new_values = {k: v for k, v in values.items() if k != drop}
+            if merged:
+                new_values[keep] = merged
+            else:
+                new_values.pop(keep, None)
+            if new_values == values:
+                continue
+            original = row["original_values_json"] or row["values_json"]
+            conn.execute(
+                f"UPDATE {table} SET values_json = ?, original_values_json = ? "
+                "WHERE id = ?",
+                (dumps(new_values), original, row["id"]),
+            )
+            changed_rows += 1
+    if problems:
+        raise ImportRejected("本次合并未执行，未改动任何数据", problems)
+
+    # 2) 列登记：旧名退出名额（两种名称共用一个名额），登记别名并级联重定向。
+    row_keep = conn.execute(
+        "SELECT * FROM candidate_columns WHERE name = ?", (keep,)
+    ).fetchone()
+    row_drop = conn.execute(
+        "SELECT * FROM candidate_columns WHERE name = ?", (drop,)
+    ).fetchone()
+    conn.execute(
+        "UPDATE candidate_columns SET in_submission = ?, in_conclusion = ? "
+        "WHERE name = ?",
+        (
+            max(row_keep["in_submission"], row_drop["in_submission"]),
+            max(row_keep["in_conclusion"], row_drop["in_conclusion"]),
+            keep,
+        ),
+    )
+    # 旧名若本身已是别名的目标，先把它名下的别名指向保留名（避免别名链，
+    # 也避免删除规范列时触发外键约束），再让旧名退出名额、登记为别名。
+    conn.execute(
+        "UPDATE column_aliases SET canonical = ? WHERE canonical = ?", (keep, drop)
+    )
+    conn.execute("DELETE FROM candidate_columns WHERE name = ?", (drop,))
+    conn.execute(
+        "INSERT INTO column_aliases(alias, canonical, created_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical",
+        (drop, keep, now_str()),
+    )
+
+    # 3) 全部联接键中的旧名换成保留名并去掉重复列。
+    def rewritten(columns):
+        out: list = []
+        for c in columns:
+            c = keep if c == drop else c
+            if c not in out:
+                out.append(c)
+        return out
+
+    for key in conn.execute("SELECT * FROM join_keys").fetchall():
+        columns = json.loads(key["columns_json"])
+        new_columns = rewritten(columns)
+        if new_columns != columns:
+            conn.execute(
+                "UPDATE join_keys SET columns_json = ? WHERE id = ?",
+                (json.dumps(new_columns, ensure_ascii=False), key["id"]),
+            )
+
+    # 4) 现用键按合并后的全库数据复验：恰好复现核定配对则继续供数，否则停供。
+    result = {
+        "keep": keep,
+        "drop": drop,
+        "changed_rows": changed_rows,
+        "key_status": "none",
+        "invalidated": None,
+    }
+    key = active_key(conn)
+    if key is None:
+        conn.execute(
+            "INSERT INTO supply_events(batch_id, event, reason, created_at) "
+            "VALUES (NULL, 'merge', ?, ?)",
+            (
+                f"备选列「{drop}」已并入「{keep}」（改写 {changed_rows} 行）；"
+                "尚无现用键，明细保持停供直至确认联接键。",
+                now_str(),
+            ),
+        )
+        return result
+
+    columns = json.loads(key["columns_json"])
+    dataset = load_dataset(conn)
+    evaluation = joinlogic.verify(dataset, columns)
+    if evaluation.passed:
+        conn.execute(
+            "UPDATE join_keys SET verified_at = ? WHERE id = ?",
+            (now_str(), key["id"]),
+        )
+        conn.execute(
+            "INSERT INTO supply_events(batch_id, event, reason, created_at) "
+            "VALUES (NULL, 'merge', ?, ?)",
+            (
+                f"备选列「{drop}」已并入「{keep}」（改写 {changed_rows} 行）；"
+                f"现用键 {fmt_columns(columns)} 复验通过，明细继续供数。",
+                now_str(),
+            ),
+        )
+        result["key_status"] = "ok"
+        return result
+
+    detail = joinlogic.diagnose(dataset, columns)
+    summary = (
+        f"列「{drop}」并入「{keep}」后，现用键 {fmt_columns(columns)} 失效："
+        f"漏连 {len(detail.missing_pairs)} 对、误连组 {len(detail.wrong_groups)} 个。"
+    )
+    conn.execute(
+        "UPDATE join_keys SET status = 'invalid', invalidated_at = ?, "
+        "invalidation_reason = ? WHERE id = ?",
+        (now_str(), summary + " 明细随本次合并停供，确认有效键后恢复。", key["id"]),
+    )
+    conn.execute(
+        "INSERT INTO supply_events(batch_id, event, reason, created_at) "
+        "VALUES (NULL, 'suspended', ?, ?)",
+        (summary + " " + "；".join(detail.summary_lines()[:4]), now_str()),
+    )
+    result["key_status"] = "invalid"
+    result["invalidated"] = {
+        "columns": columns,
+        "summary": summary,
+        "lines": detail.summary_lines(),
+        "missing_pair_count": len(detail.missing_pairs),
+        "wrong_group_count": len(detail.wrong_groups),
+    }
+    return result
+
+
 # --------------------------------------------------------------------------- 路由
 
 
@@ -488,6 +750,49 @@ def register_routes(app: Flask) -> None:
             errors=errors,
             state=supply_state(conn),
             columns=all_columns(conn),
+            aliases=aliases_by_canonical(conn),
+        )
+
+    @app.route("/columns/merge", methods=["GET", "POST"])
+    def merge_columns_view():
+        conn = get_db()
+        errors = None
+        if request.method == "POST":
+            name_a = (request.form.get("name_a") or "").strip()
+            name_b = (request.form.get("name_b") or "").strip()
+            keep = name_a if request.form.get("keep_side") == "a" else name_b
+            try:
+                with write_transaction(conn):
+                    result = merge_columns(conn, name_a, name_b, keep)
+            except ImportRejected as exc:
+                errors = {"title": exc.title, "problems": exc.problems}
+            except (sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                errors = {
+                    "title": "本次合并未执行（已整体回滚）",
+                    "problems": [f"{type(exc).__name__}: {exc}"],
+                }
+            else:
+                flash(
+                    f"备选列「{result['drop']}」已并入「{result['keep']}」，"
+                    f"改写 {result['changed_rows']} 行；两种名称共用一个备选列名额，"
+                    "补录时两个名称都按保留名处理。",
+                    "success",
+                )
+                if result["key_status"] == "invalid":
+                    flash(
+                        result["invalidated"]["summary"]
+                        + " 明细随本次合并停供，请到「找键」确认有效键后恢复。",
+                        "danger",
+                    )
+                elif result["key_status"] == "ok":
+                    flash("现用键已换用保留名并复验通过，明细继续供数。", "success")
+                return redirect(url_for("index"))
+        return render_template(
+            "merge.html",
+            errors=errors,
+            columns=all_columns(conn),
+            aliases=aliases_by_canonical(conn),
+            state=supply_state(conn),
         )
 
     @app.get("/keys")
@@ -665,6 +970,10 @@ def register_routes(app: Flask) -> None:
             "SELECT * FROM approved_pairs WHERE batch_id = ? ORDER BY submission_row_no",
             (batch_id,),
         ).fetchall()
+        row_q = (request.args.get("row") or "").strip()
+        if row_q:
+            submissions = [r for r in submissions if row_q in r["row_no"]]
+            conclusions = [r for r in conclusions if row_q in r["row_no"]]
         columns = [r["name"] for r in all_columns(conn)]
         return render_template(
             "batch.html",
@@ -673,6 +982,7 @@ def register_routes(app: Flask) -> None:
             conclusions=conclusions,
             pairs=pairs,
             columns=columns,
+            row_q=row_q,
             state=supply_state(conn),
         )
 
@@ -692,6 +1002,7 @@ def register_routes(app: Flask) -> None:
                 },
                 state=supply_state(get_db()),
                 columns=all_columns(get_db()),
+                aliases=aliases_by_canonical(get_db()),
             ),
             413,
         )

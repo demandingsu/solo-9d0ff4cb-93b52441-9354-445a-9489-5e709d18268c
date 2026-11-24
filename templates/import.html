@@ -35,18 +35,24 @@
   <h2>登记中的备选列</h2>
   {% if columns %}
   <table>
-    <thead><tr><th>列名</th><th>送检单</th><th>主检结论</th></tr></thead>
+    <thead><tr><th>列名（保留名）</th><th>已合并的别名</th><th>送检单</th><th>主检结论</th></tr></thead>
     <tbody>
     {% for c in columns %}
       <tr>
         <td class="mono">{{ c.name }}</td>
+        <td class="mono">{{ aliases.get(c.name, []) | join(', ') or '—' }}</td>
         <td>{{ '有' if c.in_submission else '—' }}</td>
         <td>{{ '有' if c.in_conclusion else '—' }}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  <p class="muted">全库最多登记 8 个备选列；只有两侧同名的列才能进入联接键。</p>
+  <p class="muted">
+    全库最多登记 8 个备选列；只有两侧同名的列才能进入联接键。
+    同一列在不同批次叫了不同名字（如「采样点」/「点位号」）时，先到
+    <a href="{{ url_for('merge_columns_view') }}">合并备选列</a>把两个名称并为一个保留名，
+    之后补录两个名称都按保留名折算、共用一个名额。
+  </p>
   {% else %}
   <p class="muted">尚未登记备选列。</p>
   {% endif %}

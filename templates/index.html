@@ -12,6 +12,7 @@
   <h2>操作入口</h2>
   <ul class="actions">
     <li><a class="button" href="{{ url_for('import_view') }}">分批入库</a> 上传送检单、主检结论、核定配对三份 CSV。</li>
+    <li><a class="button" href="{{ url_for('merge_columns_view') }}">合并备选列</a> 把两个同义列名（如「采样点」/「点位号」）并为一个保留名。</li>
     <li><a class="button" href="{{ url_for('keys_view') }}">找键与复验</a> 搜索含送检号、加列最少的等值联接键；确认时按当前数据复验。</li>
     <li><a class="button" href="{{ url_for('detail_view') }}">联接明细</a> 仅在供数正常时展示。</li>
   </ul>

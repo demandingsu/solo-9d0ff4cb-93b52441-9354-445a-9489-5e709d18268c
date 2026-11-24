@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS submission_rows (
     batch_id    INTEGER NOT NULL REFERENCES batches(id),
     row_no      TEXT NOT NULL UNIQUE,
     sample_no   TEXT NOT NULL,
-    values_json TEXT NOT NULL
+    values_json TEXT NOT NULL,
+    original_values_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conclusion_rows (
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS conclusion_rows (
     batch_id    INTEGER NOT NULL REFERENCES batches(id),
     row_no      TEXT NOT NULL UNIQUE,
     sample_no   TEXT NOT NULL,
-    values_json TEXT NOT NULL
+    values_json TEXT NOT NULL,
+    original_values_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS approved_pairs (
@@ -54,6 +56,12 @@ CREATE TABLE IF NOT EXISTS candidate_columns (
     position        INTEGER NOT NULL UNIQUE,
     in_submission   INTEGER NOT NULL DEFAULT 0,
     in_conclusion   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS column_aliases (
+    alias       TEXT PRIMARY KEY,
+    canonical   TEXT NOT NULL REFERENCES candidate_columns(name),
+    created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS join_keys (
@@ -108,8 +116,19 @@ def init_db(path: str) -> None:
     conn = connect(path)
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """对旧库做就地升级：行表补 original_values_json 列（留存合并前的原列名/原值）。"""
+    for table in ("submission_rows", "conclusion_rows"):
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "original_values_json" not in cols:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN original_values_json TEXT"
+            )
 
 
 def get_db() -> sqlite3.Connection:

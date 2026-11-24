@@ -69,7 +69,7 @@ tbody tr:hover { background: #fbfbf9; }
 .tag.bad { background: var(--bad); color: var(--bad-ink); }
 .chip { font-family: ui-monospace, monospace; }
 label { display: block; margin-bottom: 14px; }
-input[type=text] {
+input[type=text], select {
   display: block; width: 100%; max-width: 420px; margin-top: 4px;
   padding: 8px 10px; border: 1px solid #d0d0cc; border-radius: 6px; font: inherit;
 }

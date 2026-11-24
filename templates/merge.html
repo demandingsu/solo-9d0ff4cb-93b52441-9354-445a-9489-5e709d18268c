@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>合并备选列</h1>
+
+{% if errors %}
+<div class="flash danger">
+  <strong>{{ errors.title }}</strong>
+  <ul>{% for p in errors.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  <p class="muted">合并失败会整体回滚：库内数据、列登记与供数状态均保持不变。</p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <h2>用途</h2>
+  <p>
+    同一业务列在不同站的 CSV 里可能叫不同名字（例如「采样点」与「点位号」），
+    合库后两个名称各占一个备选列名额。在此把两个已登记的备选列并为一个保留名：
+    逐行取两个列的非空值作为合并值；同一行两个非空值不同会指出表名和行号，并退回整次合并。
+  </p>
+  <p class="muted">
+    合并后：两种名称共用一个备选列名额；补录时两个名称都按保留名折算；
+    找键与联接统一取合并值；现用键中的旧名换成保留名并去掉重复列，
+    仍恰好复现核定配对则继续供数，否则随合并停供、确认有效键后恢复。
+    批次页可按行查看合并前的原列名和原值。
+  </p>
+</section>
+
+{% if columns | length >= 2 %}
+<section class="panel">
+  <h2>选择要合并的两列</h2>
+  <form method="post">
+    <label>列甲
+      <select name="name_a">
+        {% for c in columns %}<option value="{{ c.name }}">{{ c.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>列乙
+      <select name="name_b">
+        {% for c in columns %}<option value="{{ c.name }}"{% if loop.index == 2 %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div>
+      保留列名：
+      <label class="check"><input type="radio" name="keep_side" value="a" checked> 保留列甲</label>
+      <label class="check"><input type="radio" name="keep_side" value="b"> 保留列乙</label>
+    </div>
+    <button type="submit">校验并合并</button>
+  </form>
+</section>
+{% else %}
+<div class="flash warning">已登记的备选列不足两个，无可合并。</div>
+{% endif %}
+
+<section>
+  <h2>登记中的备选列</h2>
+  {% if columns %}
+  <table>
+    <thead><tr><th>列名（保留名）</th><th>已合并的别名</th><th>送检单</th><th>主检结论</th></tr></thead>
+    <tbody>
+    {% for c in columns %}
+      <tr>
+        <td class="mono">{{ c.name }}</td>
+        <td class="mono">{{ aliases.get(c.name, []) | join(', ') or '—' }}</td>
+        <td>{{ '有' if c.in_submission else '—' }}</td>
+        <td>{{ '有' if c.in_conclusion else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">全库最多登记 8 个备选列；别名不另占名额。</p>
+  {% else %}
+  <p class="muted">尚未登记备选列。</p>
+  {% endif %}
+</section>
+{% endblock %}

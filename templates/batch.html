@@ -7,26 +7,49 @@
   供数：{% if batch.supply_status == 'ok' %}正常{% else %}停供（{{ batch.suspended_reason }}）{% endif %}
 </p>
 
+<section class="panel">
+  <form method="get" class="filters">
+    <input type="text" name="row" value="{{ row_q }}" placeholder="按行号过滤（如 S001）">
+    <button type="submit">查询</button>
+    {% if row_q %}<a class="button ghost" href="{{ url_for('batch_view', batch_id=batch.id) }}">清空</a>{% endif %}
+  </form>
+  <p class="muted">「原始列值」是合并列或异名补录前该行在 CSV 里的原列名和原值；未改写过的行显示 —。</p>
+</section>
+
 <h2>送检单</h2>
 <table>
-  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}<th>原始列值</th></tr></thead>
   <tbody>
   {% for r in submissions %}
     {% set values = r['values_json'] | fromjson %}
+    {% set original = r['original_values_json'] | fromjson %}
     <tr><td class="mono">{{ r.row_no }}</td><td class="mono">{{ r.sample_no }}</td>
-      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}</tr>
+      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}
+      <td>
+        {% if original %}
+          {% for k, v in original.items() %}<div class="mono">{{ k }} = {{ v }}</div>{% endfor %}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
 
 <h2>主检结论</h2>
 <table>
-  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <thead><tr><th>行号</th><th>送检号</th>{% for c in columns %}<th>{{ c }}</th>{% endfor %}<th>原始列值</th></tr></thead>
   <tbody>
   {% for r in conclusions %}
     {% set values = r['values_json'] | fromjson %}
+    {% set original = r['original_values_json'] | fromjson %}
     <tr><td class="mono">{{ r.row_no }}</td><td class="mono">{{ r.sample_no }}</td>
-      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}</tr>
+      {% for c in columns %}<td>{{ values.get(c, '') }}</td>{% endfor %}
+      <td>
+        {% if original %}
+          {% for k, v in original.items() %}<div class="mono">{{ k }} = {{ v }}</div>{% endfor %}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
